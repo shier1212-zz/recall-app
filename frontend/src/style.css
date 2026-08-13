@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Recall UI Design System Token（与 tailwind.config 同源） */
+:root {
+  --ink: #1D1D1F; --body: #6E6E73; --muted: #AEAEB2;
+  --success: #34C759; --warning: #FF9500; --danger: #FF3B30;
+  --q-blue: #3B82F6; --a-green: #10B981;
+  --c-blue: #3B82F6; --c-green: #10B981; --c-orange: #FF9500; --c-purple: #AF52DE;
+  --c-pink: #FF2D55; --c-cyan: #64D2FF; --c-amber: #FFCC00; --c-indigo: #5E5CE6;
+  --line: #E5E5EA; --surface: #FFFFFF; --bg: #F5F5F7;
+  --xs: 4px; --sm: 8px; --md: 12px; --lg: 16px; --xl: 24px; --x2: 32px;
+  --r-tag: 6px; --r-ctrl: 8px; --r-card: 12px;
+}
+
+body {
+  @apply bg-bg text-ink font-sans text-body antialiased;
+}
+
+/* 毛玻璃顶栏 */
+.glass {
+  background: rgba(245, 245, 247, .82);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+/* 细滚动条 */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: #D6D6DB; border-radius: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* 简单过渡 */
+.fade-enter-active, .fade-leave-active { transition: opacity .15s; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
