@@ -263,6 +263,45 @@ export const store = reactive({
     this.showToast('已删除该错题')
   },
 
+  /** 录入时实时调用 AI 识别学科（轻量端点 /ai/classify-subject）。
+   *  - 复用 pickProvider 选最合适的 provider
+   *  - 拼齐所有 key + base_url 让后端 fallback 时能自动换 provider
+   *  - 返回 {subject, knowledgePoints, provider, aiStatus, reason}，失败时 subject='未分类'
+   */
+  async classifySubject(content: string): Promise<{ subject: string; knowledgePoints: string[]; provider: string; aiStatus: 'ok' | 'fallback' | 'partial'; reason?: string }> {
+    const picked = pickProvider(this.apiKeys, this.providerHealth)
+    const allKeys: Record<string, string> = {}
+    for (const k of ['deepseek', 'zhipu', 'siliconflow'] as const) {
+      const v = (this.apiKeys[k] || '').trim()
+      if (v) allKeys[k] = v
+    }
+    const allUrls: Record<string, string> = {}
+    for (const k of ['deepseek', 'zhipu', 'siliconflow'] as const) {
+      const v = (this.baseUrls[k] || '').trim()
+      if (v) allUrls[k] = v
+    }
+    const preferred = this.providerHealth.passed.slice()
+    try {
+      const r = await api.classifySubject({
+        content,
+        provider: picked.provider,
+        apiKey: picked.key,
+        baseUrl: (allUrls[picked.provider] || '').trim() || undefined,
+        tryFallback: true,
+        preferredProviders: preferred,
+        allApiKeys: allKeys,
+        allBaseUrls: allUrls,
+      })
+      // 根据真实结果维护 provider 健康度
+      if (r.aiStatus === 'ok' && picked.provider !== 'mock') this.markProviderPassed(picked.provider)
+      else if (r.aiStatus === 'fallback' && picked.provider !== 'mock') this.markProviderFailed(picked.provider)
+      return r
+    } catch (e) {
+      console.error('classifySubject 失败', e)
+      return { subject: '未分类', knowledgePoints: [], provider: 'mock', aiStatus: 'fallback', reason: '本地调用失败' }
+    }
+  },
+
   async newConversation() {
     const c = await api.createConversation('新对话')
     this.conversations.unshift(c)

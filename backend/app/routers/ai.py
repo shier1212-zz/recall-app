@@ -29,6 +29,30 @@ def analyze(payload: schemas.AnalyzeRequest):
     return ai_service.analyze_mistake(payload.content)
 
 
+@router.post("/ai/classify-subject")
+def classify_subject(payload: schemas.ClassifyRequest):
+    """轻量学科分类：录入题目时实时调用，仅返回 subject + knowledge_points。
+    复用 analyze_mistake 的 fallback 轮询逻辑（优先级：provider → preferred → priority）。
+    全失败时返回 ai_status='fallback'，subject='未分类'，并通过 tried/reason 给出失败原因。"""
+    preferred = payload.preferred_providers or []
+    api_key_overrides: dict = dict(payload.all_api_keys or {})
+    if payload.provider and payload.api_key:
+        api_key_overrides[payload.provider] = payload.api_key
+    base_url_overrides: dict = dict(payload.all_base_urls or {})
+    if payload.provider and payload.base_url:
+        base_url_overrides[payload.provider] = payload.base_url
+    return ai_service.classify_subject(
+        payload.content,
+        provider=payload.provider,
+        api_key=payload.api_key,
+        api_key_overrides={**api_key_overrides, "__preferred__": (preferred[0] if preferred else None)},
+        base_url=payload.base_url,
+        base_url_overrides=base_url_overrides,
+        try_fallback=payload.try_fallback,
+        exclude_providers=[],
+    )
+
+
 @router.post("/ai/variant")
 def variant(payload: schemas.AnalyzeRequest):
     """同知识点变式题生成。"""

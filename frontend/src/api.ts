@@ -278,3 +278,50 @@ export async function testConnection(provider: AiProvider, apiKey?: string, base
   const { data } = await http.post('/test-connection', { provider, api_key: apiKey ?? null, base_url: baseUrl ?? null })
   return data
 }
+
+/** 轻量学科分类（录入题目时实时调用）：
+ *  - POST /ai/classify-subject，返回 {subject, knowledge_points, provider, ai_status}
+ *  - mock 模式：用本地规则按学科关键词兜底返回学科
+ *  - 前端可传入 allApiKeys/allBaseUrls 让后端 fallback 轮询其他 provider
+ */
+export async function classifySubject(p: {
+  content: string;
+  provider?: AiProvider;
+  apiKey?: string;
+  baseUrl?: string;
+  tryFallback?: boolean;
+  preferredProviders?: AiProvider[];
+  allApiKeys?: Record<string, string>;
+  allBaseUrls?: Record<string, string>;
+}): Promise<{ subject: string; knowledgePoints: string[]; provider: string; aiStatus: 'ok' | 'fallback' | 'partial'; reason?: string }> {
+  if (USE_MOCK) {
+    // mock：用 ai_service 同款关键词兜底
+    const c = p.content || ''
+    let subject = ''
+    const map: [RegExp, string][] = [
+      [/导数|切线|积分|函数|单调|极值|不等式|数列/, '数学'],
+      [/牛顿|加速度|位移|力|电场|磁场|光|物理/, '物理'],
+      [/化学键|反应|元素|摩尔|化学/, '化学'],
+      [/细胞|遗传|DNA|基因|生物/, '生物'],
+      [/语法|虚拟|时态|从句|单词|英语/, '英语'],
+      [/古诗|文言文|作文|语文/, '语文'],
+      [/朝代|战争|革命|历史/, '历史'],
+      [/哲学|经济|政治|时政/, '政治'],
+      [/气候|经度|纬度|公转|自转|地理/, '地理'],
+    ]
+    for (const [re, sub] of map) { if (re.test(c)) { subject = sub; break } }
+    return { subject: subject || '未分类', knowledgePoints: [], provider: 'mock', aiStatus: subject ? 'ok' : 'fallback' }
+  }
+  const { data } = await http.post('/ai/classify-subject', {
+    content: p.content,
+    provider: p.provider ?? '',
+    api_key: p.apiKey ?? null,
+    base_url: p.baseUrl ?? null,
+    try_fallback: p.tryFallback ?? true,
+    preferred_providers: p.preferredProviders ?? [],
+    all_api_keys: p.allApiKeys ?? {},
+    all_base_urls: p.allBaseUrls ?? {},
+  })
+  // 后端 snake_case → 已被拦截器转 camelCase
+  return data
+}

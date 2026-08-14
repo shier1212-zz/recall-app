@@ -210,6 +210,118 @@ def _safe_json_loads(raw: str) -> Optional[dict]:
     return None
 
 
+def classify_subject(
+    content: str,
+    provider: str = "",
+    api_key: Optional[str] = None,
+    api_key_overrides: Optional[dict] = None,
+    base_url: Optional[str] = None,
+    base_url_overrides: Optional[dict] = None,
+    try_fallback: bool = True,
+    exclude_providers: Optional[list] = None,
+) -> Dict[str, Any]:
+    """轻量学科分类：仅返回 {subject, knowledge_points}，prompt 短、token 省，适合录入时实时调用。
+
+    - 复用 auto_pick_provider + priority fallback 轮询逻辑（与 analyze_mistake 一致）
+    - 不生成 error_reason / ai_analysis（与前端 UI 实时反馈的诉求对齐）
+    - 全失败时返回 ai_status='fallback'，subject='未分类'，并把每个 provider 的失败原因带回 tried
+    """
+    exclude = set(exclude_providers or [])
+    tried: list[dict] = []
+    preferred = (api_key_overrides or {}).pop("__preferred__", None) if isinstance(api_key_overrides, dict) else None
+    url_overrides: dict = dict(base_url_overrides or {})
+    if provider and base_url and str(base_url).strip():
+        url_overrides[provider] = str(base_url).strip()
+
+    _SYSTEM_PROMPT = (
+        "你是学科分类器。判断题目所属学科，候选：数学/物理/化学/生物/英语/语文/历史/政治/地理/信息/通用。"
+        "严格输出一个 JSON 对象：{\"subject\": \"学科名\", \"knowledge_points\": [\"知识点1\", \"知识点2\"]}。"
+        "只输出 JSON，无解释、无 markdown 围栏、无前缀。"
+    )
+
+    def _try_one(p: str, k: Optional[str], b: Optional[str]) -> Optional[dict]:
+        if not p or p == "mock":
+            return None
+        cli = _llm(p, k, b)
+        if cli is None:
+            tried.append({"provider": p, "status": "no_key", "reason": "未配置 Key", "snippet": ""})
+            _log(p, "未配置 Key，跳过")
+            return None
+        try:
+            raw = _chat(
+                p,
+                _SYSTEM_PROMPT,
+                content,
+                temperature=0.1,
+                max_tokens=120,
+                api_key=k,
+                base_url=b,
+            )
+        except Exception as e:
+            reason = humanize_error(p, e)
+            tried.append({"provider": p, "status": "api_error", "reason": reason, "snippet": str(e)[:80]})
+            _log(p, f"调用失败: {reason}")
+            return None
+
+        data = _safe_json_loads(raw)
+        if data and (data.get("subject") or data.get("knowledge_points")):
+            tried.append({"provider": p, "status": "ok", "reason": "", "snippet": ""})
+            return {
+                "subject": str(data.get("subject", "")).strip() or "未分类",
+                "knowledge_points": [str(x).strip() for x in (data.get("knowledge_points") or []) if str(x).strip()][:5],
+            }
+
+        # JSON 解析失败：用 _extract_subject_kp_from_text 在原始 raw 里兜底捞一次
+        snippet = (raw or "").strip()[:200]
+        subj, kp = _extract_subject_kp_from_text(raw or "")
+        if subj or kp:
+            tried.append({"provider": p, "status": "partial", "reason": "JSON 解析失败，已从原文兜底", "snippet": snippet[:80]})
+            return {"subject": subj or "未分类", "knowledge_points": kp}
+
+        tried.append({"provider": p, "status": "no_signal", "reason": "模型无有效输出", "snippet": snippet[:80]})
+        return None
+
+    # 1) 显式 provider
+    if provider and provider not in exclude:
+        r = _try_one(provider, api_key, base_url)
+        if r:
+            return {**r, "provider": provider, "ai_status": "ok"}
+        exclude.add(provider)
+    # 2) preferred（已测试通过的 provider，按时间倒序）
+    if try_fallback and preferred and preferred not in exclude:
+        ok = (api_key_overrides or {}).get(preferred) if isinstance(api_key_overrides, dict) else None
+        ob = url_overrides.get(preferred)
+        r = _try_one(preferred, ok, ob)
+        if r:
+            return {**r, "provider": preferred, "ai_status": "ok"}
+        exclude.add(preferred)
+    # 3) priority 轮询剩余可用 provider
+    if try_fallback:
+        for p in _PROVIDER_PRIORITY:
+            if p in exclude:
+                continue
+            ok = (api_key_overrides or {}).get(p) if isinstance(api_key_overrides, dict) else None
+            ob = url_overrides.get(p)
+            if not ok and not _provider_has_key(p, api_key_overrides):
+                continue
+            r = _try_one(p, ok, ob)
+            if r:
+                return {**r, "provider": p, "ai_status": "ok"}
+            exclude.add(p)
+
+    # 全失败：降级 + 失败原因
+    last_p = provider or (preferred if preferred in _PROVIDER_PRIORITY else auto_pick_provider(api_key_overrides)) or "mock"
+    detail_lines = [f"· {_PROVIDER_LABEL.get(t['provider'], t['provider'])}: {t['status']} — {t['reason']}" for t in tried[:5]]
+    return {
+        "subject": "未分类",
+        "knowledge_points": [],
+        "provider": last_p,
+        "ai_status": "fallback",
+        "tried": tried,
+        "reason": "\n".join(detail_lines) if detail_lines else "暂未配置 AI Key（到 AI 答疑页设置 Key 后可自动识别学科）",
+    }
+
+
 def _extract_subject_kp_from_text(text: str) -> tuple[str, list[str]]:
     """从纯文本里弱匹配出学科和知识点（兜底用，给无法解析 JSON 的小模型）。"""
     subjects = ["数学", "物理", "英语", "化学", "生物", "历史", "政治", "地理", "语文"]

@@ -100,3 +100,17 @@ class ReviewRequest(BaseModel):
 
 class AnalyzeRequest(BaseModel):
     content: str
+
+
+class ClassifyRequest(BaseModel):
+    """轻量学科分类请求：录入题目时实时调用，仅返回 subject + knowledge_points。
+    字段含义与 MistakeCreate 一致（透传 provider/api_key/base_url/fallback/preferred 等）。
+    """
+    content: str
+    provider: str = ""
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+    try_fallback: bool = True
+    preferred_providers: List[str] = []
+    all_api_keys: Dict[str, str] = {}
+    all_base_urls: Dict[str, str] = {}

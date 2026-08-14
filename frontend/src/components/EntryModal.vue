@@ -7,14 +7,17 @@ import { ocrUpload } from '../api'
 const router = useRouter()
 const tab = ref<'photo' | 'shot' | 'text' | 'chat'>('photo')
 const text = ref('')
-const subject = ref('数学')
+const subject = ref('')                 // 默认空，等待 AI 实时识别
 const kps = ref('')
 const source = ref('手动录入')
 const msg = ref('')
 const uploading = ref(false)
+const classifying = ref(false)          // 学科识别 loading
+const classifyReason = ref('')          // 识别失败/降级原因（用于提示）
+const aiSubject = ref(false)            // 当前学科是否由 AI 给出（true → 用户没手动改过）
 const categoryId = ref<number>(1)
 
-const subjects = ['数学', '物理', '英语', '化学', '生物', '历史', '政治', '地理']
+const subjects = ['数学', '物理', '英语', '化学', '生物', '历史', '政治', '地理', '语文', '信息']
 
 const tabs = [
   { key: 'photo' as const, label: '📷 拍照' },
@@ -32,8 +35,63 @@ watch(
   { immediate: true }
 )
 
+// 学科识别：录入时实时调用 AI（debounced 800ms，避免每次按键都打 API）
+let classifyTimer: number | null = null
+function scheduleClassify(textContent: string) {
+  if (classifyTimer) window.clearTimeout(classifyTimer)
+  const c = (textContent || '').trim()
+  // 太短不调（< 4 个有效字符，避免噪声请求）；但只要内容变化就清掉旧值，避免残留旧学科
+  if (c.length < 4) {
+    classifyReason.value = c ? '题目太短，请补全后再识别' : ''
+    classifying.value = false
+    return
+  }
+  classifyTimer = window.setTimeout(async () => {
+    classifying.value = true
+    try {
+      const r = await store.classifySubject(c)
+      // 只在"AI 仍是主来源"时覆盖；用户手动选了学科后不再回写
+      if (aiSubject.value) {
+        if (r.subject && r.subject !== '未分类') {
+          subject.value = r.subject
+        }
+        // 知识点也顺手回填（仅当用户没填）
+        if (r.knowledgePoints && r.knowledgePoints.length && !kps.value.trim()) {
+          kps.value = r.knowledgePoints.join('、')
+        }
+      }
+      classifyReason.value = r.aiStatus === 'fallback' ? (r.reason || 'AI 识别失败，请手动选择学科') : ''
+    } finally {
+      classifying.value = false
+    }
+  }, 800)
+}
+
+// 文本 tab：题目内容变化时触发学科识别
+watch(text, (v) => scheduleClassify(v))
+// 对话 tab：口述内容变化时触发
+watch(msg, (v) => scheduleClassify(v))
+
+// 用户手动点击学科按钮时：标记为非 AI 来源，AI 不再覆盖
+function pickSubjectManually(s: string) {
+  subject.value = s
+  aiSubject.value = false
+  classifyReason.value = ''
+}
+
 async function submit() {
   if (!text.value.trim()) { store.showToast('请先填写题目内容'); return }
+  // 若 AI 还没识别或识别失败，主动再调一次以确保学科合理
+  if (!subject.value.trim() || subject.value === '未分类') {
+    classifying.value = true
+    try {
+      const r = await store.classifySubject(text.value.trim())
+      if (r.subject && r.subject !== '未分类') subject.value = r.subject
+      if (r.knowledgePoints?.length && !kps.value.trim()) kps.value = r.knowledgePoints.join('、')
+    } finally {
+      classifying.value = false
+    }
+  }
   await store.addMistake({
     content: text.value.trim(),
     subject: subject.value,
@@ -41,7 +99,7 @@ async function submit() {
     source: source.value || '手动录入',
     categoryId: categoryId.value,
   })
-  text.value = ''; kps.value = ''
+  text.value = ''; kps.value = ''; subject.value = ''; aiSubject.value = false; classifyReason.value = ''
   store.closeEntry()
 }
 
@@ -55,8 +113,11 @@ async function onFile(e: Event) {
     tab.value = 'text'  // F1：无论成功与否都切到文本 tab，让用户看到/补充题目
     if (res.text && res.text.trim()) {
       text.value = res.text
-      if (res.subject) subject.value = res.subject
-      store.showToast('OCR 识别完成，请确认题目内容')
+      // OCR 后清掉旧的学科标记，让 watch(text) → scheduleClassify → AI 重新识别
+      subject.value = ''
+      aiSubject.value = true
+      classifyReason.value = ''
+      store.showToast('OCR 识别完成，AI 正在识别学科…')
     } else {
       store.showToast('未能识别到文字，请手动输入题目')
     }
@@ -69,16 +130,26 @@ async function onFile(e: Event) {
   }
 }
 
-function archiveFromChat() {
+async function archiveFromChat() {
   if (!msg.value.trim()) { store.showToast('请先描述你的错题'); return }
-  store.addMistake({
+  // 对话归档前再次确认学科（与 submit 同样的兜底）
+  if (!subject.value.trim() || subject.value === '未分类') {
+    classifying.value = true
+    try {
+      const r = await store.classifySubject(msg.value.trim())
+      if (r.subject && r.subject !== '未分类') subject.value = r.subject
+    } finally {
+      classifying.value = false
+    }
+  }
+  await store.addMistake({
     content: msg.value.trim(),
-    subject: '',
-    knowledgePoints: [],
+    subject: subject.value,
+    knowledgePoints: kps.value.split(/[,，\/\s]+/).filter(Boolean),
     source: '对话录入',
     categoryId: categoryId.value,
   })
-  msg.value = ''
+  msg.value = ''; subject.value = ''; aiSubject.value = false; classifyReason.value = ''
   store.closeEntry()
 }
 
@@ -130,17 +201,23 @@ function gotoChat() {
           v-model="text" placeholder="粘贴或输入题目内容…"
           class="w-full border border-line rounded-ctrl p-3 text-body resize-y min-h-[96px] focus:outline-none focus:border-qblue focus:ring-2 focus:ring-qblue/20"
         />
-        <div class="flex flex-wrap gap-2 my-3">
+        <div class="flex items-center gap-2 my-3">
+          <span class="text-cap text-muted whitespace-nowrap">学科</span>
+          <span v-if="classifying" class="text-cap text-qblue animate-pulse">AI 识别中…</span>
+          <span v-else-if="subject && aiSubject" class="text-cap text-qblue">✨ AI 已识别</span>
+        </div>
+        <div class="flex flex-wrap gap-2">
           <button
             v-for="s in subjects" :key="s"
             class="text-cap border border-dashed rounded-tag px-2 py-0.5 transition"
             :class="subject === s ? 'bg-qblue text-white border-qblue' : 'border-line text-body hover:border-qblue'"
-            @click="subject = s"
+            @click="pickSubjectManually(s)"
           >{{ s }}</button>
         </div>
+        <p v-if="classifyReason" class="text-cap text-warn mt-2">⚠️ {{ classifyReason }}</p>
         <input
-          v-model="kps" placeholder="知识点（可选，逗号分隔）"
-          class="w-full border border-line rounded-ctrl px-3 py-2 text-body focus:outline-none focus:border-qblue"
+          v-model="kps" placeholder="知识点（可选，AI 识别后会自动补充）"
+          class="w-full border border-line rounded-ctrl px-3 py-2 text-body mt-2 focus:outline-none focus:border-qblue"
         />
         <div class="flex items-center gap-2 mt-2">
           <label class="text-cap text-muted whitespace-nowrap">错题本</label>
@@ -164,6 +241,13 @@ function gotoChat() {
           v-model="msg" placeholder="例如：这道导数题我不会，求 y=x² 在 x=1 处的切线方程…"
           class="w-full border border-line rounded-ctrl p-3 text-body resize-y min-h-[96px] focus:outline-none focus:border-qblue focus:ring-2 focus:ring-qblue/20"
         />
+        <div class="flex items-center gap-2 mt-3">
+          <span class="text-cap text-muted whitespace-nowrap">学科</span>
+          <span v-if="classifying" class="text-cap text-qblue animate-pulse">AI 识别中…</span>
+          <span v-else-if="subject && aiSubject" class="text-cap text-qblue">✨ {{ subject || '待识别' }}</span>
+          <span v-else-if="subject" class="text-cap text-body">{{ subject }}</span>
+        </div>
+        <p v-if="classifyReason" class="text-cap text-warn mt-1">⚠️ {{ classifyReason }}</p>
         <div class="flex gap-2 mt-3">
           <button class="bg-qblue text-white rounded-ctrl px-4 py-2 text-body hover:opacity-90 transition" @click="archiveFromChat">AI 识别并归档</button>
           <button class="border border-line rounded-ctrl px-4 py-2 text-body hover:border-qblue transition" @click="gotoChat">去 AI 答疑提问</button>
