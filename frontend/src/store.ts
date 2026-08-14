@@ -263,6 +263,99 @@ export const store = reactive({
     this.showToast('已删除该错题')
   },
 
+  /** 拼装「现在浏览器里真实可用的 keys」覆盖到所有 provider 上。和 addMistake 内部相同逻辑。
+   *  返回值供 store.reparseMistake / batchReparse 复用。 */
+  _collectAllProviderKeys(): { allKeys: Record<string, string>; allUrls: Record<string, string>; preferred: AiProvider[]; picked: { provider: AiProvider; key: string } } {
+    const picked = pickProvider(this.apiKeys, this.providerHealth)
+    const allKeys: Record<string, string> = {}
+    for (const k of ['deepseek', 'zhipu', 'siliconflow'] as const) {
+      const v = (this.apiKeys[k] || '').trim()
+      if (v) allKeys[k] = v
+    }
+    const allUrls: Record<string, string> = {}
+    for (const k of ['deepseek', 'zhipu', 'siliconflow'] as const) {
+      const v = (this.baseUrls[k] || '').trim()
+      if (v) allUrls[k] = v
+    }
+    const preferred = this.providerHealth.passed.slice()
+    return { allKeys, allUrls, preferred, picked }
+  },
+
+  /** 对单条错题重新调用 AI：完全复用 store 当前真实配置的 keys（含"上次连通过的"的 preferred 列表）。
+   *  用于：① 用户给历史降级错题"重跑 AI 解析"；② 批量重跑入口。返回最新 mistake。 */
+  async reparseMistake(id: number): Promise<Mistake> {
+    const target = this.mistakes.find(x => x.id === id)
+    if (!target) throw new Error('错题不存在')
+    const { allKeys, allUrls, preferred, picked } = this._collectAllProviderKeys()
+    // 如果连 mock 都选不到（即什么 key 都没配），直接提示用户
+    if (picked.provider === 'mock' && Object.keys(allKeys).length === 0) {
+      this.showToast('未配置任何 AI Key，无法重跑；请先到「🔑 设置 Key」配置')
+      throw new Error('no_api_keys')
+    }
+    try {
+      const updated = await api.reparseMistake({
+        id,
+        provider: picked.provider,
+        apiKey: picked.key,
+        baseUrl: (allUrls[picked.provider] || '').trim() || undefined,
+        tryFallback: true,
+        preferredProviders: preferred,
+        allApiKeys: allKeys,
+        allBaseUrls: allUrls,
+      })
+      // 同步到 store
+      const idx = this.mistakes.findIndex(x => x.id === id)
+      if (idx >= 0) this.mistakes[idx] = { ...this.mistakes[idx], ...updated }
+      const usedProv = (updated.provider || picked.provider) as AiProvider
+      const status = updated.aiStatus || 'fallback'
+      const label = usedProv === 'mock' ? '本地规则'
+        : usedProv === 'deepseek' ? 'DeepSeek'
+        : usedProv === 'zhipu' ? '智谱 GLM-4' : '硅基流动'
+      if (status === 'ok') {
+        this.showToast(`已用 ${label} 重跑完成 ✓`)
+        if (usedProv !== 'mock') this.markProviderPassed(usedProv)
+      } else if (status === 'partial') {
+        this.showToast(`已重跑（${label} 部分解析）`)
+        if (usedProv !== 'mock') this.markProviderPassed(usedProv)
+      } else {
+        this.showToast(`已重跑（${label} 仍失败，详见卡片）`)
+        if (usedProv !== 'mock') this.markProviderFailed(usedProv)
+      }
+      return updated
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      if (msg !== 'no_api_keys') {
+        this.showToast('重跑失败：' + (msg || '未知错误'))
+      }
+      throw e
+    }
+  },
+
+  /** 批量重跑所有"是降级解析"的错题：仅扫 provider==''或==='mock' 或 ai_status==='fallback' 的题。
+   *  顺序串行执行（避免瞬时打爆 API），过程中显示进度 toast。返回成功数 / 总数。 */
+  async batchReparse(): Promise<{ ok: number; total: number }> {
+    const targets = this.mistakes.filter(m =>
+      !m.provider || m.provider === 'mock' || m.aiStatus === 'fallback'
+    )
+    if (targets.length === 0) {
+      this.showToast('当前没有需要重跑的错题 ✓')
+      return { ok: 0, total: 0 }
+    }
+    this.showToast(`开始批量重跑 ${targets.length} 题…`)
+    let ok = 0
+    for (let i = 0; i < targets.length; i++) {
+      const m = targets[i]
+      try {
+        await this.reparseMistake(m.id)
+        ok += 1
+      } catch {
+        // 单条失败已 toast 提示，继续下一条
+      }
+    }
+    this.showToast(`批量重跑完成：${ok}/${targets.length} 成功`)
+    return { ok, total: targets.length }
+  },
+
   /** 录入时实时调用 AI 识别学科（轻量端点 /ai/classify-subject）。
    *  - 复用 pickProvider 选最合适的 provider
    *  - 拼齐所有 key + base_url 让后端 fallback 时能自动换 provider

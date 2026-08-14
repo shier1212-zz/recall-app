@@ -92,6 +92,24 @@ async function doExport() {
   store.showToast('已导出 PDF 报告')
 }
 
+/** 触发批量重跑：仅重跑 provider==''/='mock' 或 ai_status==='fallback' 的错题。
+ *  串行执行；进度由 store.batchReparse 内部 toast 反馈。 */
+const batchReparseRunning = ref(false)
+async function batchReparse() {
+  if (batchReparseRunning.value) return
+  batchReparseRunning.value = true
+  try {
+    await store.batchReparse()
+  } finally {
+    batchReparseRunning.value = false
+  }
+}
+
+/** 顶部"批量重跑"按钮要显示的待重跑数量（=降级/无 provider 的题数）。 */
+const reparseCount = computed(() =>
+  store.mistakes.filter(m => !m.provider || m.provider === 'mock' || m.aiStatus === 'fallback').length
+)
+
 /** 当前筛选/分类下"未复习"的题数（用于按钮文案 + 禁用态） */
 const todoCount = computed(() => list.value.filter(m => !m.reviewed).length)
 
@@ -171,6 +189,18 @@ function startReview() {
           :disabled="todoCount === 0"
           @click="startReview"
         >{{ todoCount === 0 ? '暂无未复习' : `开始复习 (${todoCount})` }}</button>
+        <button
+          class="border rounded-ctrl px-3.5 py-2 text-body transition flex items-center gap-1"
+          :class="batchReparseRunning || reparseCount === 0
+            ? 'border-line text-muted cursor-not-allowed'
+            : 'border-agreen/40 text-agreen hover:bg-agreen hover:text-surface'"
+          :disabled="batchReparseRunning || reparseCount === 0"
+          :title="reparseCount === 0 ? '当前没有需要重跑的错题' : '用浏览器中已配置的真实 AI Key 批量重跑所有降级解析的错题'"
+          @click="batchReparse"
+        >
+          <span v-if="!batchReparseRunning">🔄 批量重跑 AI 解析 ({{ reparseCount }})</span>
+          <span v-else>⏳ 批量重跑中…</span>
+        </button>
         <input
           v-model="query" placeholder="搜索错题、知识点…"
           class="flex-1 min-w-[160px] border border-line rounded-ctrl px-3 py-2 text-body focus:outline-none focus:border-qblue focus:ring-2 focus:ring-qblue/20"

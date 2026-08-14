@@ -7,6 +7,8 @@ import StatusBadge from './StatusBadge.vue'
 
 const props = defineProps<{ mistake: Mistake }>()
 const showAns = ref(false)
+/** 单独跟踪"重跑中"状态，让按钮能 disable 并显示进度。 */
+const reparseRunning = ref(false)
 
 const providerLabel = (p?: string) =>
   p === 'deepseek' ? 'DeepSeek'
@@ -24,6 +26,26 @@ const statusBadge = computed(() => {
 
 /** 历史脏数据/双重 JSON/替代符等异常 → 经 formatAiAnalysis 规范化为可读纯文本 */
 const formattedAi = computed(() => formatAiAnalysis(props.mistake.aiAnalysis))
+
+/** 是否显示"重跑"按钮：仅当这条是降级解析或没真模型跑过时显示，避免误点浪费配额。 */
+const showReparseBtn = computed(() => {
+  const m = props.mistake
+  return !m.provider || m.provider === 'mock' || m.aiStatus === 'fallback'
+})
+
+/** 单条重跑：用 store 当前真实配置的 keys 调 /mistakes/{id}/reparse。 */
+async function onReparse() {
+  if (reparseRunning.value) return
+  reparseRunning.value = true
+  try {
+    await store.reparseMistake(props.mistake.id)
+    // toast 已在 store 内处理；自动展开解析以让用户看到新结果
+    showAns.value = true
+  } catch { /* toast 已提示 */ }
+  finally {
+    reparseRunning.value = false
+  }
+}
 </script>
 
 <template>
@@ -58,6 +80,19 @@ const formattedAi = computed(() => formatAiAnalysis(props.mistake.aiAnalysis))
         class="text-cap border border-line rounded-ctrl px-2.5 py-1 text-body hover:border-qblue hover:text-qblue transition"
         @click.stop="showAns = !showAns"
       >解析</button>
+      <button
+        v-if="showReparseBtn"
+        class="text-cap border rounded-ctrl px-2.5 py-1 text-body transition flex items-center gap-1"
+        :class="reparseRunning
+          ? 'border-line text-muted cursor-wait'
+          : 'border-agreen/40 text-agreen hover:bg-agreen hover:text-surface'"
+        :disabled="reparseRunning"
+        :title="reparseRunning ? '正在用当前配置的 AI 重跑…' : '用浏览器中已配置的真实 AI Key 重新解析（优先用连接成功的客户端）'"
+        @click.stop="onReparse"
+      >
+        <span v-if="!reparseRunning">🔄 重跑 AI 解析</span>
+        <span v-else>⏳ 重跑中…</span>
+      </button>
       <button
         class="text-cap border border-line rounded-ctrl px-2.5 py-1 text-body hover:border-qblue hover:text-qblue transition"
         @click.stop="store.showToast('编辑功能（MVP 占位）')"

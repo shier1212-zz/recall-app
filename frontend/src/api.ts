@@ -135,6 +135,43 @@ export async function deleteMistake(id: number): Promise<void> {
   await http.delete(`/mistakes/${id}`)
 }
 
+/** 错题 AI 重跑解析：把当前 store 真实配置的 keys 透传后端，强制用真模型再解析一次。
+ *  返回最新的 MistakeOut（ai_status/provider/ai_analysis 会被覆盖）。 */
+export async function reparseMistake(p: {
+  id: number;
+  provider: AiProvider;
+  apiKey: string;
+  baseUrl?: string;
+  tryFallback?: boolean;
+  preferredProviders?: AiProvider[];
+  allApiKeys?: Record<string, string>;
+  allBaseUrls?: Record<string, string>;
+}): Promise<Mistake> {
+  if (USE_MOCK) {
+    // mock: 直接覆盖 aiAnalysis 模拟"重跑成功"
+    const idx = mistakes.findIndex(m => m.id === p.id)
+    if (idx < 0) throw new Error('错题不存在')
+    const updated: Mistake = {
+      ...mistakes[idx],
+      aiAnalysis: `（mock 重跑）已用 ${p.provider} 重新解析：本题是 ${mistakes[idx].subject} 基础题，重点掌握 ${mistakes[idx].knowledgePoints.join(' / ')}。`,
+      provider: p.provider,
+      aiStatus: 'ok',
+    }
+    mistakes[idx] = updated
+    return updated
+  }
+  const { data } = await http.post(`/mistakes/${p.id}/reparse`, {
+    provider: p.provider,
+    api_key: p.apiKey ?? null,
+    base_url: p.baseUrl ?? null,
+    try_fallback: p.tryFallback ?? true,
+    preferred_providers: p.preferredProviders ?? [],
+    all_api_keys: p.allApiKeys ?? {},
+    all_base_urls: p.allBaseUrls ?? {},
+  })
+  return data
+}
+
 export async function createConversation(title: string): Promise<Conversation> {
   if (USE_MOCK) {
     const c: Conversation = { id: nextId() + 500, title, messages: [] }

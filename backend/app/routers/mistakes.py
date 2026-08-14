@@ -217,3 +217,58 @@ def delete_mistake(mid: int, db: Session = Depends(get_db)):
     db.commit()
     vector_service.delete_mistake(mid)
     return {"ok": True}
+
+
+@router.post("/mistakes/{mid}/reparse", response_model=schemas.MistakeOut)
+def reparse_mistake(mid: int, payload: schemas.ReparseRequest, db: Session = Depends(get_db)):
+    """错题 AI 重解析：用请求中透传的 keys 重跑 analyze_mistake，覆盖更新 ai_* 字段。
+
+    适用场景：历史错题入库时因 keys 缺失走了本地规则降级，**用户在浏览器前端配置好真实 Key 后**调用本接口
+    自动用真模型重跑——后端按 ①显式 provider ②preferred_providers ③_priority 轮询可用 provider。
+    返回最新 MistakeOut（包含新 ai_status / provider / ai_analysis）。
+    """
+    m = db.get(models.Mistake, mid)
+    if not m:
+        raise HTTPException(404, "错题不存在")
+
+    preferred = payload.preferred_providers or []
+    api_key_overrides: dict = dict(payload.all_api_keys or {})
+    if payload.provider and payload.api_key:
+        api_key_overrides[payload.provider] = payload.api_key
+    base_url_overrides: dict = dict(payload.all_base_urls or {})
+    if payload.provider and payload.base_url:
+        base_url_overrides[payload.provider] = payload.base_url
+
+    ai = ai_service.analyze_mistake(
+        m.content,
+        provider=payload.provider,
+        api_key=payload.api_key,
+        api_key_overrides={**api_key_overrides, "__preferred__": (preferred[0] if preferred else None)},
+        base_url=payload.base_url,
+        base_url_overrides=base_url_overrides,
+        try_fallback=payload.try_fallback,
+        exclude_providers=[],
+    )
+
+    # 用 AI 重解析结果覆盖入库；subject/knowledge_points 即使原本是规则兜底的也允许被覆盖
+    m.ai_analysis = ai["ai_analysis"]
+    m.subject = ai.get("subject") or m.subject
+    kp = ai.get("knowledge_points") or []
+    if isinstance(kp, list) and kp:
+        m.knowledge_points = kp
+    db.commit()
+    db.refresh(m)
+    return schemas.MistakeOut(
+        id=m.id,
+        category_id=m.category_id,
+        content=m.content,
+        subject=m.subject,
+        knowledge_points=m.knowledge_points,
+        source=m.source,
+        review_count=m.review_count,
+        reviewed=m.reviewed,
+        ai_analysis=m.ai_analysis,
+        created_at=m.created_at,
+        ai_status=ai.get("ai_status", "fallback"),
+        provider=ai.get("provider", ""),
+    )
