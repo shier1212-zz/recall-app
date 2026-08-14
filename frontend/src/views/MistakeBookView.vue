@@ -6,11 +6,9 @@ import MistakeCard from '../components/MistakeCard.vue'
 import { exportPdf } from '../api'
 
 const router = useRouter()
-const activeCat = ref(0)
-const activeSubject = ref('')            // '' = 全部学科
+const activeSubject = ref('')            // '' = 全部
 const query = ref('')
 const filter = ref<'all' | 'reviewed' | 'todo'>('all')
-const newCat = ref('')
 
 // 与录入时"学科"按钮完全一致的 10 个学科（错题分类导航的主入口）
 const subjects = ['数学', '物理', '英语', '化学', '生物', '历史', '政治', '地理', '语文', '信息']
@@ -39,7 +37,6 @@ const subjectCounts = computed(() => {
 
 const list = computed(() =>
   store.mistakes.filter(m => {
-    if (activeCat.value !== 0 && m.categoryId !== activeCat.value) return false
     if (activeSubject.value && m.subject !== activeSubject.value) return false
     if (filter.value === 'reviewed' && !m.reviewed) return false
     if (filter.value === 'todo' && m.reviewed) return false
@@ -55,29 +52,12 @@ const list = computed(() =>
   })
 )
 
-/** 互斥的导航：点学科清掉错题本；点错题本清掉学科；点"全部"清掉两者 */
+/** 点学科；再点同一项则取消；点"全部"亦可重置。 */
 function pickSubject(s: string) {
   activeSubject.value = activeSubject.value === s ? '' : s
-  activeCat.value = 0
-}
-function pickCat(id: number) {
-  activeCat.value = activeCat.value === id ? 0 : id
-  activeSubject.value = ''
 }
 function pickAll() {
   activeSubject.value = ''
-  activeCat.value = 0
-}
-
-async function addCat() {
-  const name = newCat.value.trim()
-  if (!name) { store.showToast('请输入错题本名称'); return }
-  try {
-    await store.addCat(name)
-    newCat.value = ''
-  } catch {
-    // 失败 toast 已在 store.addCat 内提示
-  }
 }
 
 // F10：分页（前端分片，兼容 1 万+ 题内存渲染）
@@ -85,7 +65,7 @@ const pageSize = 12
 const page = ref(1)
 const totalPages = computed(() => Math.max(1, Math.ceil(list.value.length / pageSize)))
 const pagedList = computed(() => list.value.slice((page.value - 1) * pageSize, page.value * pageSize))
-watch([list, activeCat, activeSubject, filter, query], () => { page.value = 1 })
+watch([list, activeSubject, filter, query], () => { page.value = 1 })
 
 async function doExport() {
   await exportPdf()
@@ -132,7 +112,7 @@ function startReview() {
       <div class="text-cap text-muted mb-3">按学科</div>
       <div
         class="flex items-center justify-between px-2.5 py-2 rounded-ctrl cursor-pointer text-body transition"
-        :class="activeSubject === '' && activeCat === 0 ? 'bg-cblue/10 text-qblue font-semibold' : 'hover:bg-bg'"
+        :class="activeSubject === '' ? 'bg-cblue/10 text-qblue font-semibold' : 'hover:bg-bg'"
         @click="pickAll"
       >
         <span class="flex items-center gap-2">📚 全部</span>
@@ -155,27 +135,6 @@ function startReview() {
       >
         <span class="flex items-center gap-2"><i class="w-2 h-2 rounded-full inline-block bg-muted"></i>其它</span>
         <span class="text-cap text-muted">{{ subjectCounts.other }}</span>
-      </div>
-
-      <!-- 错题本（用户自建分类，辅助维度） -->
-      <div class="text-cap text-muted mb-3 mt-6">错题本</div>
-      <div
-        v-for="c in store.categories" :key="c.id"
-        class="flex items-center justify-between px-2.5 py-2 rounded-ctrl cursor-pointer text-body transition"
-        :class="activeCat === c.id ? 'bg-cblue/10 text-qblue font-semibold' : 'hover:bg-bg'"
-        @click="pickCat(c.id)"
-      >
-        <span class="flex items-center gap-2">
-          <i class="w-2 h-2 rounded-full inline-block" :style="{ background: c.color }"></i>{{ c.name }}
-        </span>
-        <span class="text-cap text-muted">{{ c.count }}</span>
-      </div>
-      <div class="flex gap-1.5 mt-4">
-        <input
-          v-model="newCat" placeholder="新增错题本…" class="flex-1 min-w-0 border border-line rounded-ctrl px-2.5 py-1.5 text-cap focus:outline-none focus:border-qblue"
-          @keydown.enter="addCat"
-        />
-        <button class="border border-line rounded-ctrl px-2.5 py-1.5 text-cap hover:border-qblue hover:text-qblue transition" @click="addCat">＋</button>
       </div>
     </aside>
 
