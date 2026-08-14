@@ -175,6 +175,129 @@ def _log(tag: str, msg: str) -> None:
     print(f"[ai_service] {tag}: {msg}", file=sys.stderr, flush=True)
 
 
+def _clean_ai_text(text: str, max_len: int = 800) -> str:
+    """清洗模型原始输出里的噪声字符，使入库文本可读。
+
+    处理对象：
+      - ASCII 控制字符（除 \\n \\r \\t 外全去掉）
+      - 替换字符 U+FFFD（U+FFFD 在乱码文本里常以连片出现）
+      - 模型丢失中文标点时的替代符：◆ ◇ ■ ● ▲ ▼（连续出现视为噪声）
+      - 被 token 化的拉丁文/西文（如 pérdida / é / í 等孤立出现在中文段落里）→
+        任何含变音符号（U+00C0–U+024F）的拉丁词视为乱码插入，整词丢弃；
+        纯 ASCII 英文术语（GPS/AI/Python 等）保留。
+      - 连续空行/连续空白压缩为单个换行或单空格
+      - 长度截断到 max_len（防御超长输出）
+
+    这是"最后一道防线"——主防线仍然是 prompt + JSON 解析。
+    """
+    if not text:
+        return ""
+    s = text
+    # 1) 替换字符 U+FFFD
+    s = s.replace("\ufffd", "")
+    # 2) ASCII 控制字符（保留 \n \r \t）
+    s = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", s)
+    # 3) 模型替代符序列：连续 2 个以上 ◆/■/●/▲/▼/◇ 视为噪声行，整段去掉
+    s = re.sub(r"[◆■▲▼●◇]{2,}", " ", s)
+    # 4) 单个 ◆ 等作为中文标点替代时，直接去掉（比保留噪声更友好）
+    for sym in ("◆", "■", "▲", "▼", "●", "◇"):
+        s = s.replace(sym, "")
+    # 5) 拉丁扩展字符噪声：含变音符号（é/á/ñ/ü…）的拉丁词视为乱码插入，整词丢弃。
+    #    纯 ASCII 英文术语（GPS/AI/Python 等）不受影响。
+    s = re.sub(r"[A-Za-z\u00C0-\u024F]*[\u00C0-\u024F][A-Za-z\u00C0-\u024F]*", " ", s)
+    # 6) 连续空白行 / 多个空格 → 单换行 / 单空格
+    s = re.sub(r"[ \t]{2,}", " ", s)
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    s = s.strip()
+    # 7) 长度截断
+    if len(s) > max_len:
+        s = s[:max_len].rstrip() + "…"
+    return s
+
+
+def _parse_kp_fallback(raw_kp_field: str) -> list:
+    """从 raw 里抠出来的 knowledge_points 字段值不一定是合法 JSON 数组。
+    兼容：[...] / "a,b,c" / 'a','b' / a / b 等形式。
+    抠不出合法项时返回空列表。"""
+    if not raw_kp_field:
+        return []
+    s = raw_kp_field.strip()
+    # 1) 尝试 JSON
+    try:
+        v = json.loads(s)
+        if isinstance(v, list):
+            return [str(x).strip() for x in v if str(x).strip()][:5]
+    except Exception:
+        pass
+    # 2) 剥括号 → 按 , 或 、 分隔
+    s = s.strip("[]")
+    parts = re.split(r"[,，、;；\n]+", s)
+    out = []
+    for p in parts:
+        p = p.strip().strip("'\"`").strip()
+        if p and p not in out:
+            out.append(p)
+        if len(out) >= 5:
+            break
+    return out
+
+
+def _extract_ai_field_from_text(raw: str, field: str) -> str:
+    """从可能非法的 JSON 字符串里用宽松正则抠出指定字段的字符串值。
+
+    例：raw = '{ "subject":"地理", "ai_analysis": "对①◆...◇，地球..." }'
+        field = "ai_analysis" → '对，地球...'
+    支持：
+      - 字段名带双引号 / 单引号 / 无引号
+      - 值里允许未转义的真换行（multi-line），以启发式"遇到下一字段或 '} 作收尾
+      - 值末尾常见污染（", " \", '\n 等）会顺手清掉
+    抠不出来返回空串。
+    """
+    if not raw or not field:
+        return ""
+    # 尝试 1：找 "field"\s*:\s*"（支持到下一个 "field" 或 顶层的 "} 结束）
+    # 用 lazy + 手动收尾
+    pattern = re.compile(
+        r'"' + re.escape(field) + r'"\s*:\s*"',  # "field":"
+        re.IGNORECASE,
+    )
+    m = pattern.search(raw)
+    if not m:
+        return ""
+    start = m.end()
+    # 从 start 起找匹配的结束：状态机跟踪 \ 转义
+    i = start
+    buf: list[str] = []
+    while i < len(raw):
+        ch = raw[i]
+        if ch == "\\" and i + 1 < len(raw):
+            # 处理 \" \\ \n \t 等转义
+            nxt = raw[i + 1]
+            if nxt == "n":
+                buf.append("\n")
+            elif nxt == "t":
+                buf.append("\t")
+            elif nxt == "r":
+                buf.append("\r")
+            elif nxt == '"':
+                buf.append('"')
+            elif nxt == "\\":
+                buf.append("\\")
+            else:
+                buf.append(nxt)
+            i += 2
+            continue
+        if ch == '"':
+            # 字段结束
+            break
+        buf.append(ch)
+        i += 1
+    val = "".join(buf)
+    # 后处理：去掉首尾的空白污染字符
+    val = re.sub(r"[\ufffd\u200b-\u200f\ufeff]", "", val)
+    return val.strip()
+
+
 def _safe_json_loads(raw: str) -> Optional[dict]:
     """宽松 JSON 解析：兼容模型返回里夹杂的控制字符/单行注释/未转义换行等。
     依次尝试：① 清洗控制字符后标准解析 ② 抽取首段 {...} 块后解析 ③ 直接解析。
@@ -398,7 +521,12 @@ def analyze_mistake(
         try:
             raw = _chat(
                 p,
-                "你是资深中学教师。请把学生的错题解析为严格 JSON，字段：subject(学科，单一字符串)、knowledge_points(知识点，字符串数组，<=5 个)、error_reason(错因，1-2 句)、ai_analysis(完整分步解析)。只输出一个 JSON 对象，不要任何解释、思考、markdown 围栏或前缀。",
+                "你是资深中学教师。请把学生的错题解析为严格 JSON，字段："
+                "subject(学科，单一字符串)、knowledge_points(知识点，字符串数组，<=5 个)、"
+                "error_reason(错因，1-2 句)、ai_analysis(完整分步解析)。"
+                "只输出一个 JSON 对象，不要任何解释、思考、markdown 围栏或前缀。"
+                "【重要】严格使用 ASCII 数字(1 2 3)与中文全角标点(，。：；！？),"
+                "不要用 ◆■▲▼●◇ 等替代符,不要输出乱码/控制字符/西文片段。",
                 content,
                 api_key=k,
                 base_url=b,
@@ -422,20 +550,44 @@ def analyze_mistake(
             }
 
         # JSON 解析失败：模型可能有响应，但格式不合法（小模型常见）。
-        # 此时不再丢弃——把原文当 ai_analysis 保留，标 'partial'，让用户至少能看到内容。
+        # 此时不再丢弃——优先从 raw 里抠出 ai_analysis/error_reason 字段值做兜底，
+        # 抠不到再清洗原文后保留（仍标 'partial'），让用户至少能看到干净的内容。
         snippet = (raw or "").strip()[:400]
-        tried.append({"provider": p, "status": "partial", "reason": "JSON 解析失败，保留原文", "snippet": snippet})
-        _log(p, f"JSON 解析失败，保留原文（前 80 字）: {snippet[:80]!r}")
+        tried.append({"provider": p, "status": "partial", "reason": "JSON 解析失败，已尝试字段抽取+清洗", "snippet": snippet})
+        _log(p, f"JSON 解析失败，尝试字段抽取（前 80 字）: {snippet[:80]!r}")
+
+        raw_ai = _extract_ai_field_from_text(raw or "", "ai_analysis")
+        raw_err = _extract_ai_field_from_text(raw or "", "error_reason")
+        raw_subj_field = _extract_ai_field_from_text(raw or "", "subject")
+        raw_kp_field = _extract_ai_field_from_text(raw or "", "knowledge_points")
+
+        # 字段抽取成功 → 直接当 ai_analysis，标 partial 但内容干净
+        if raw_ai:
+            cleaned_ai = _clean_ai_text(raw_ai, max_len=2000)
+            if cleaned_ai:
+                subj = raw_subj_field or ""
+                return {
+                    "provider": p,
+                    "subject": subj or "数学",
+                    "knowledge_points": _parse_kp_fallback(raw_kp_field) if raw_kp_field else [],
+                    "error_reason": _clean_ai_text(raw_err, max_len=200),
+                    "ai_analysis": cleaned_ai,
+                    "ai_status": "partial",
+                }
+
+        # 字段抽取失败 → 清洗原文（去 ◆/控制字符/拉丁噪声）后保留
         if snippet:
+            cleaned = _clean_ai_text(snippet, max_len=800)
             subj, kp = _extract_subject_kp_from_text(raw or "")
-            return {
-                "provider": p,
-                "subject": subj or "数学",
-                "knowledge_points": kp,
-                "error_reason": "",
-                "ai_analysis": f"{raw.strip()}\n\n（提示：模型未按 JSON 输出，已保留原文；如需结构化字段请用支持 JSON 的模型或把 prompt 改为更明确的指令）",
-                "ai_status": "partial",
-            }
+            if cleaned:
+                return {
+                    "provider": p,
+                    "subject": (raw_subj_field or subj or "数学"),
+                    "knowledge_points": _parse_kp_fallback(raw_kp_field) if raw_kp_field else kp,
+                    "error_reason": _clean_ai_text(raw_err, max_len=200),
+                    "ai_analysis": cleaned + "\n\n（提示：模型未按 JSON 输出，已清洗保留原文；如需更结构化结果，可在 AI 答疑页改用支持 JSON 的模型）",
+                    "ai_status": "partial",
+                }
         return None
 
     # 1. 按指定顺序尝试

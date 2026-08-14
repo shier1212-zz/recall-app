@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { store } from '../store'
 import type { ReviewResult } from '../types'
+import { formatAiAnalysis } from '../utils/formatAi'
 
 const router = useRouter()
 const showAnalysis = ref(false)
@@ -13,6 +14,9 @@ const done = computed(() => store.reviewDone)
 const current = computed(() => (done.value || total.value === 0 ? null : queue.value[store.reviewIndex]))
 const progress = computed(() => (total.value === 0 ? 0 : Math.round((store.reviewIndex / total.value) * 100)))
 const stats = computed(() => store.reviewStats)
+
+/** 历史脏数据/双重 JSON/替代符等异常 → 经 formatAiAnalysis 规范化为可读纯文本 */
+const formattedAnalysis = computed(() => (current.value ? formatAiAnalysis(current.value.aiAnalysis) : ''))
 
 async function act(result: ReviewResult) {
   if (!current.value) return
@@ -99,7 +103,7 @@ function restartUnmastered() {
           class="mt-3 p-3 bg-cgreen/5 border border-cgreen/30 rounded-ctrl text-body"
           style="color: #065F46; line-height: 1.7"
         >
-          {{ current.aiAnalysis || '暂无 AI 解析。' }}
+          {{ formattedAnalysis || '暂无 AI 解析。' }}
         </div>
       </div>
     </div>

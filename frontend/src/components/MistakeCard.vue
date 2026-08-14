@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import type { Mistake, AiProvider } from '../types'
 import { store } from '../store'
+import { formatAiAnalysis } from '../utils/formatAi'
 import StatusBadge from './StatusBadge.vue'
 
 const props = defineProps<{ mistake: Mistake }>()
@@ -16,10 +17,13 @@ const providerLabel = (p?: string) =>
 const statusBadge = computed(() => {
   const s = props.mistake.aiStatus
   if (s === 'ok') return { txt: `✓ ${providerLabel(props.mistake.provider)} 解析`, cls: 'text-success' }
-  if (s === 'partial') return { txt: `⚠ ${providerLabel(props.mistake.provider)} 部分解析（原文已保留）`, cls: 'text-warning' }
+  if (s === 'partial') return { txt: `⚠ ${providerLabel(props.mistake.provider)} 部分解析（已清洗）`, cls: 'text-warning' }
   // fallback / 未知
   return { txt: '⚠ 已降级解析', cls: 'text-muted' }
 })
+
+/** 历史脏数据/双重 JSON/替代符等异常 → 经 formatAiAnalysis 规范化为可读纯文本 */
+const formattedAi = computed(() => formatAiAnalysis(props.mistake.aiAnalysis))
 </script>
 
 <template>
@@ -46,7 +50,7 @@ const statusBadge = computed(() => {
         <span class="text-cap font-semibold text-agreen bg-agreen/10 rounded-tag px-2 py-0.5">AI 解析</span>
         <span class="text-cap" :class="statusBadge.cls">{{ statusBadge.txt }}</span>
       </div>
-      <p class="mt-2 text-body text-agreen bg-agreen/5 rounded-tag px-3 py-2 leading-relaxed whitespace-pre-wrap">{{ mistake.aiAnalysis }}</p>
+      <p class="mt-2 text-body text-agreen bg-agreen/5 rounded-tag px-3 py-2 leading-relaxed whitespace-pre-wrap">{{ formattedAi }}</p>
     </div>
 
     <div class="mt-4 flex items-center gap-2">
