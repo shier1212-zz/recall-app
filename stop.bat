@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 setlocal
 chcp 65001 >nul
 echo 正在停止 Recall 前后端服务...
