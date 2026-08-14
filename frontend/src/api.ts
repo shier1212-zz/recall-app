@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { Category, Mistake, Conversation, NewMistake, ChatMessage, AiProvider, ReviewResult } from './types'
+import type { Category, Mistake, Conversation, NewMistake, ChatMessage, AiProvider, ReviewResult, CommunityPost, CommunityComment } from './types'
 import { mockCategories, mockMistakes, mockConversations, nextId } from './mock'
 
 /** VITE_USE_MOCK=true（默认）→ 使用本地 mock 数据；false → 请求 FastAPI 后端 */
@@ -30,7 +30,10 @@ http.interceptors.response.use(res => {
 let mistakes: Mistake[] = [...mockMistakes]
 let categories: Category[] = [...mockCategories]
 let conversations: Conversation[] = [...mockConversations]
+let communityPosts: CommunityPost[] = []
+let communityComments: CommunityComment[] = []
 let msgSeq = 10000
+let postSeq = 50000
 
 export async function fetchCategories(): Promise<Category[]> {
   if (USE_MOCK) return categories
@@ -369,5 +372,103 @@ export async function classifySubject(p: {
     all_base_urls: p.allBaseUrls ?? {},
   })
   // 后端 snake_case → 已被拦截器转 camelCase
+  return data
+}
+
+// ==================== 答题圈 API ====================
+
+function deviceId(): string {
+  let id = localStorage.getItem('recall_device_id')
+  if (!id) {
+    id = 'dev-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36)
+    localStorage.setItem('recall_device_id', id)
+  }
+  return id
+}
+
+export async function listCommunityPosts(): Promise<CommunityPost[]> {
+  if (USE_MOCK) return communityPosts
+  const { data } = await http.get('/community/posts', { headers: { 'X-Device-Id': deviceId() } })
+  return data
+}
+
+export async function getCommunityPost(id: number): Promise<CommunityPost> {
+  if (USE_MOCK) {
+    const p = communityPosts.find(x => x.id === id)
+    if (!p) throw new Error('帖子不存在（mock）')
+    return p
+  }
+  const { data } = await http.get(`/community/posts/${id}`, { headers: { 'X-Device-Id': deviceId() } })
+  return data
+}
+
+export async function createCommunityPost(p: {
+  title: string; summary?: string; fullText?: string; solution?: string; subject?: string; authorName: string
+}): Promise<CommunityPost> {
+  if (USE_MOCK) {
+    const np: CommunityPost = {
+      id: postSeq++, title: p.title, summary: p.summary ?? p.title.slice(0, 80),
+      fullText: p.fullText ?? '', solution: p.solution ?? '', subject: p.subject ?? '',
+      authorName: p.authorName, authorColor: '#5E5CE6',
+      viewCount: 0, likeCount: 0, shareCount: 0, commentCount: 0,
+      createdAt: new Date().toISOString(), liked: false, mine: true,
+    }
+    communityPosts = [np, ...communityPosts]
+    return np
+  }
+  const { data } = await http.post('/community/posts', {
+    title: p.title, summary: p.summary ?? '', full_text: p.fullText ?? '',
+    solution: p.solution ?? '', subject: p.subject ?? '', author_name: p.authorName,
+  }, { headers: { 'X-Device-Id': deviceId() } })
+  return data
+}
+
+export async function deleteCommunityPost(id: number): Promise<{ ok: boolean }> {
+  if (USE_MOCK) { communityPosts = communityPosts.filter(x => x.id !== id); return { ok: true } }
+  const { data } = await http.delete(`/community/posts/${id}`, { headers: { 'X-Device-Id': deviceId() } })
+  return data
+}
+
+export async function toggleCommunityLike(id: number): Promise<{ liked: boolean; likeCount: number }> {
+  if (USE_MOCK) {
+    const p = communityPosts.find(x => x.id === id)
+    if (!p) return { liked: false, likeCount: 0 }
+    if (p.liked) { p.liked = false; p.likeCount = Math.max(0, p.likeCount - 1) }
+    else { p.liked = true; p.likeCount++ }
+    return { liked: p.liked, likeCount: p.likeCount }
+  }
+  const { data } = await http.post(`/community/posts/${id}/like`, {}, { headers: { 'X-Device-Id': deviceId() } })
+  return data
+}
+
+export async function shareCommunityPost(id: number): Promise<{ shareCount: number }> {
+  if (USE_MOCK) {
+    const p = communityPosts.find(x => x.id === id)
+    if (!p) return { shareCount: 0 }
+    p.shareCount++
+    return { shareCount: p.shareCount }
+  }
+  const { data } = await http.post(`/community/posts/${id}/share`)
+  return data
+}
+
+export async function listCommunityComments(postId: number): Promise<CommunityComment[]> {
+  if (USE_MOCK) return communityComments.filter(c => c.postId === postId)
+  const { data } = await http.get(`/community/posts/${postId}/comments`)
+  return data
+}
+
+export async function addCommunityComment(postId: number, authorName: string, content: string): Promise<CommunityComment> {
+  if (USE_MOCK) {
+    const c: CommunityComment = {
+      id: postSeq++, postId, authorName, authorColor: '#10B981',
+      content, likeCount: 0, createdAt: new Date().toISOString(),
+    }
+    communityComments.push(c)
+    const p = communityPosts.find(x => x.id === postId)
+    if (p) p.commentCount++
+    return c
+  }
+  const { data } = await http.post(`/community/posts/${postId}/comments`, { author_name: authorName, content })
   return data
 }

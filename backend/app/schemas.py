@@ -128,3 +128,52 @@ class ClassifyRequest(BaseModel):
     preferred_providers: List[str] = []
     all_api_keys: Dict[str, str] = {}
     all_base_urls: Dict[str, str] = {}
+
+
+# ==================== 答题圈 Schemas ====================
+
+class CommunityPostOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    title: str
+    summary: str = ""
+    subject: str = ""
+    author_name: str
+    author_color: str = "#3B82F6"
+    view_count: int = 0
+    like_count: int = 0
+    share_count: int = 0
+    comment_count: int = 0
+    created_at: datetime
+    liked: bool = False           # 当前设备是否已点赞
+    mine: bool = False            # 当前设备是否为作者（用于显示删除按钮）
+
+
+class CommunityPostDetailOut(CommunityPostOut):
+    full_text: str = ""
+    solution: str = ""
+
+
+class CommunityPostCreate(BaseModel):
+    title: str
+    summary: str = ""
+    full_text: str = ""
+    solution: str = ""
+    subject: str = ""
+    author_name: str
+
+
+class CommunityCommentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    post_id: int
+    author_name: str
+    author_color: str = "#10B981"
+    content: str
+    like_count: int = 0
+    created_at: datetime
+
+
+class CommunityCommentCreate(BaseModel):
+    author_name: str
+    content: str

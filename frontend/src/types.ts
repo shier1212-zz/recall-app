@@ -111,3 +111,33 @@ export interface ProviderHealth {
 
 /** 一题一题复习动作的结果类型 */
 export type ReviewResult = 'mastered' | 'unmastered' | 'skip'
+
+// ==================== 答题圈（社区帖子 / 评论） ====================
+
+export interface CommunityPost {
+  id: number
+  title: string
+  summary: string
+  subject: string
+  authorName: string
+  authorColor: string
+  viewCount: number
+  likeCount: number
+  shareCount: number
+  commentCount: number
+  createdAt: string
+  liked: boolean       // 当前设备是否已点赞
+  mine: boolean        // 当前设备是否是作者
+  fullText?: string    // 仅详情时有
+  solution?: string    // 仅详情时有
+}
+
+export interface CommunityComment {
+  id: number
+  postId: number
+  authorName: string
+  authorColor: string
+  content: string
+  likeCount: number
+  createdAt: string
+}

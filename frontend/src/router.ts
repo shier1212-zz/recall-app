@@ -4,6 +4,7 @@ import AiChatView from './views/AiChatView.vue'
 import DashboardView from './views/DashboardView.vue'
 import HelpView from './views/HelpView.vue'
 import ReviewView from './views/ReviewView.vue'
+import PostsView from './views/PostsView.vue'
 
 /** 未匹配路由的兜底（避免白屏） */
 const NotFound = {
@@ -16,6 +17,7 @@ export default createRouter({
     { path: '/', name: 'home', component: MistakeBookView },
     { path: '/review', name: 'review', component: ReviewView },
     { path: '/ai', name: 'ai', component: AiChatView },
+    { path: '/posts', name: 'posts', component: PostsView },
     { path: '/dashboard', name: 'dashboard', component: DashboardView },
     { path: '/help', name: 'help', component: HelpView },
     { path: '/:pathMatch(.*)*', name: 'not-found', component: NotFound }

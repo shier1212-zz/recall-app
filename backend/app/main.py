@@ -10,7 +10,7 @@ from sqlalchemy import text
 
 from app import models, seed
 from app.database import Base, engine
-from app.routers import ai, chat, mistakes
+from app.routers import ai, chat, community, mistakes
 
 Base.metadata.create_all(bind=engine)
 
@@ -50,6 +50,7 @@ app.add_middleware(
 app.include_router(mistakes.router, prefix="/api")
 app.include_router(chat.router, prefix="/api")
 app.include_router(ai.router, prefix="/api")
+app.include_router(community.router, prefix="/api")
 
 
 @app.on_event("startup")

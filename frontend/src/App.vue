@@ -11,6 +11,7 @@ const active = computed(() => route.name as string)
 const navItems = [
   { to: '/', name: 'home', label: '错题集', icon: '📚' },
   { to: '/ai', name: 'ai', label: 'AI 答疑', icon: '💬' },
+  { to: '/posts', name: 'posts', label: '答题圈', icon: '📮' },
   { to: '/dashboard', name: 'dashboard', label: '数据看板', icon: '📊' },
   { to: '/help', name: 'help', label: '帮助', icon: '❓' }
 ]
