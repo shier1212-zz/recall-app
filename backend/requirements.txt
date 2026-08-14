@@ -1,4 +1,4 @@
-# ===== Recall 后端依赖（FastAPI + SQLite + ChromaDB + DeepSeek + PaddleOCR + ReportLab）=====
+# ===== Recall 后端依赖（FastAPI + SQLite + ChromaDB + DeepSeek + ReportLab）=====
 fastapi>=0.111
 uvicorn[standard]>=0.30
 sqlalchemy>=2.0
@@ -11,9 +11,9 @@ openai>=1.30
 # 向量数据库
 chromadb>=0.5.0
 
-# OCR（PaddleOCR-VL：阅卷拍照识别；需与后端 Python 版本匹配的轮子，当前为 cp313）
-paddlepaddle>=3.0.0
-paddleocr>=3.0.0
+# OCR 已停用（2026-08-15 用户放弃 PaddleOCR，避免重装时误拉回）
+# paddlepaddle>=3.0.0
+# paddleocr>=3.0.0
 
 # PDF 导出
 reportlab>=4.1.0
