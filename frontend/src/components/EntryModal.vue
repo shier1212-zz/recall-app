@@ -19,7 +19,7 @@ const categoryId = ref<number>(1)
 const dragOver = ref(false)             // 截图 tab 拖拽高亮
 const pasteHint = ref('')               // 截图 tab 粘贴反馈（"检测到剪贴板图片，识别中…"）
 
-const subjects = ['数学', '物理', '英语', '化学', '生物', '历史', '政治', '地理', '语文', '信息']
+const subjects = ['数学', '物理', '英语', '化学', '生物', '历史', '政治', '地理', '语文']
 
 const tabs = [
   { key: 'photo' as const, label: '📷 拍照' },

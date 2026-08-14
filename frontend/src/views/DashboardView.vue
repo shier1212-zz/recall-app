@@ -88,10 +88,9 @@ const trendPoints = computed(() => {
 
     <div class="bg-surface border border-line rounded-card p-6">
       <div class="flex items-baseline justify-between mb-4">
-        <h3 class="text-h2">学科分布（真实数据）</h3>
+        <h3 class="text-h2">学科分布</h3>
         <span class="text-cap text-muted">
           共 <span class="text-qblue font-semibold">{{ subjectStats.total }}</span> 题
-          <span v-if="subjectStats.otherCount" class="ml-2">· 其它 {{ subjectStats.otherCount }}（历史脏学科）</span>
         </span>
       </div>
       <div v-if="subjectStats.items.length" class="space-y-3">

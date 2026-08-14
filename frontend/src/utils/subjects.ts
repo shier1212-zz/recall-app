@@ -12,8 +12,8 @@
  * 不放在视图内、也不放在 store，是为了让 错题集侧边栏 + 数据面板分布 共享同一份语义。
  */
 
-// 标准 10 学科（与 EntryModal 学科按钮的"value"一一对应）
-export const SUBJECTS = ['数学', '物理', '英语', '化学', '生物', '历史', '政治', '地理', '语文', '信息'] as const
+// 标准 9 学科（与 EntryModal 学科按钮的"value"一一对应；2026-08-15 移除「信息」）
+export const SUBJECTS = ['数学', '物理', '英语', '化学', '生物', '历史', '政治', '地理', '语文'] as const
 
 // 学科→展示色（与 EntryModal 按钮色系协调）
 export const SUBJECT_COLORS: Record<string, string> = {
@@ -25,8 +25,7 @@ export const SUBJECT_COLORS: Record<string, string> = {
   历史: '#AC8E68',
   政治: '#FF375F',
   地理: '#0A84FF',
-  语文: '#BF5AF2',
-  信息: '#64D2FF'
+  语文: '#BF5AF2'
 }
 
 // 标准化：历史脏数据（如"计算机科学"、"HTML ..."、""）→ 都不在标准列表里，最终会落到"其它"
@@ -54,29 +53,25 @@ export interface SubjectStats {
 /**
  * 基于错题列表算出学科分布。
  * 用法：const stats = computeSubjectStats(store.mistakes)
+ *
+ * 2026-08-15：移除「其它」聚合项 + 移除「信息」学科后，只统计 9 个标准学科。
+ * 不在 SUBJECTS 里的历史脏数据题（如「计算机科学」/ 空 subject 等）会被忽略，不计入任何指标。
  */
 export function computeSubjectStats(mistakes: { subject?: string }[]): SubjectStats {
   const counts: Record<string, number> = {}
   for (const s of SUBJECTS) counts[s] = 0
-  let other = 0
   for (const m of mistakes ?? []) {
     const norm = normalizeSubject(m.subject)
-    if (norm) {
-      counts[norm]++
-    } else if (m.subject && String(m.subject).trim()) {
-      other++
-    }
+    if (norm) counts[norm]++
+    // 非标准学科的题不再聚合到「其它」（用户已删除该分类）
   }
 
   const items: SubjectStat[] = SUBJECTS.map(s => ({ subject: s, count: counts[s], display: s }))
-  if (other > 0) {
-    items.push({ subject: '__other__', count: other, display: '其它' })
-  }
 
   return {
     items,
     total: (mistakes ?? []).length,
     knownTotal: SUBJECTS.reduce((a, s) => a + counts[s], 0),
-    otherCount: other
+    otherCount: 0
   }
 }

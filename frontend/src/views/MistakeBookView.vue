@@ -108,13 +108,7 @@ function startReview() {
         </span>
         <span class="text-cap text-muted">{{ subjectStats.items[i]?.count ?? 0 }}</span>
       </div>
-      <div
-        v-if="subjectStats.otherCount > 0"
-        class="flex items-center justify-between px-2.5 py-2 rounded-ctrl cursor-pointer text-body transition hover:bg-bg"
-      >
-        <span class="flex items-center gap-2"><i class="w-2 h-2 rounded-full inline-block bg-muted"></i>其它</span>
-        <span class="text-cap text-muted">{{ subjectStats.otherCount }}</span>
-      </div>
+      <!-- 2026-08-15：移除「其它」导航项，只保留 9 个标准学科 -->
     </aside>
 
     <!-- 右：操作栏 + 卡片列表 -->
