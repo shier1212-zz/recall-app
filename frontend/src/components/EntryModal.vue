@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { store } from '../store'
 import { ocrUpload } from '../api'
@@ -16,6 +16,8 @@ const classifying = ref(false)          // 学科识别 loading
 const classifyReason = ref('')          // 识别失败/降级原因（用于提示）
 const aiSubject = ref(false)            // 当前学科是否由 AI 给出（true → 用户没手动改过）
 const categoryId = ref<number>(1)
+const dragOver = ref(false)             // 截图 tab 拖拽高亮
+const pasteHint = ref('')               // 截图 tab 粘贴反馈（"检测到剪贴板图片，识别中…"）
 
 const subjects = ['数学', '物理', '英语', '化学', '生物', '历史', '政治', '地理', '语文', '信息']
 
@@ -107,6 +109,12 @@ async function onFile(e: Event) {
   const input = e.target as HTMLInputElement
   const f = input.files?.[0]
   if (!f) return
+  await processFile(f)
+  input.value = ''  // 允许重复选择同一文件
+}
+
+// 共享逻辑：上传一张图片 → OCR → 切到文本 tab → 自动 AI 识别学科
+async function processFile(f: File) {
   uploading.value = true
   try {
     const res = await ocrUpload(f)
@@ -126,9 +134,67 @@ async function onFile(e: Event) {
     store.showToast('OCR 识别失败（依赖未安装），请手动输入题目')
   } finally {
     uploading.value = false
-    input.value = ''  // 允许重复选择同一文件
   }
 }
+
+// 拖拽截图 → processFile
+function handleDragOver(e: DragEvent) {
+  e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+  dragOver.value = true
+}
+function handleDragLeave(e: DragEvent) {
+  // mouseout 时只在离开整个容器时取消高亮，避免子元素穿越时闪烁
+  if (e.currentTarget === e.target) dragOver.value = false
+}
+async function handleDrop(e: DragEvent) {
+  e.preventDefault()
+  dragOver.value = false
+  const f = e.dataTransfer?.files?.[0]
+  if (!f) return
+  if (!f.type.startsWith('image/')) {
+    store.showToast('请拖拽图片文件')
+    return
+  }
+  await processFile(f)
+}
+
+// Ctrl+V 粘贴板截图 → processFile（全局监听：焦点不必在 modal 内）
+function handlePaste(e: ClipboardEvent) {
+  // 只在截图 tab 响应，避免在文本/对话 tab 误吞用户的文字粘贴
+  if (tab.value !== 'shot') return
+  const items = e.clipboardData?.items
+  if (!items || items.length === 0) return
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]
+    if (item.kind === 'file' && item.type.startsWith('image/')) {
+      e.preventDefault()
+      const f = item.getAsFile()
+      if (f) {
+        // 截屏工具默认文件名会是 "image.png"，重命名带时间戳，便于 OCR 端排查
+        const namedFile = f.name && f.name !== 'image.png'
+          ? f
+          : new File([f], `paste-${Date.now()}.png`, { type: f.type })
+        pasteHint.value = '已捕获剪贴板图片，正在 OCR…'
+        processFile(namedFile).finally(() => { pasteHint.value = '' })
+      }
+      return
+    }
+  }
+  // 剪贴板里没有图片，但用户按了 Ctrl+V，给个温和提示
+  pasteHint.value = '剪贴板里没有图片（按 Ctrl+Shift+S / Win+Shift+S 截屏后再粘贴）'
+  setTimeout(() => { pasteHint.value = '' }, 3500)
+}
+
+onMounted(() => {
+  // document 级监听：焦点落在 modal 内任意元素（含截图 tab 容器）时，
+  // Ctrl+V 都会被页面收到，paste 事件对象随后能拿到完整的 clipboardData.items
+  document.addEventListener('paste', handlePaste as EventListener)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('paste', handlePaste as EventListener)
+  if (classifyTimer) window.clearTimeout(classifyTimer)
+})
 
 async function archiveFromChat() {
   if (!msg.value.trim()) { store.showToast('请先描述你的错题'); return }
@@ -186,9 +252,18 @@ function gotoChat() {
       </div>
 
       <!-- 截图 -->
-      <div v-if="tab === 'shot'" class="mt-4 border border-dashed border-line rounded-card p-6 text-center">
-        <p class="text-body text-body">✂️ 拖拽截图到此处，或粘贴（Ctrl+V）</p>
-        <p class="text-cap text-muted mt-1">OCR 自动提取题目文本</p>
+      <div
+        v-if="tab === 'shot'"
+        class="mt-4 border-2 border-dashed rounded-card p-6 text-center transition"
+        :class="dragOver ? 'border-qblue bg-cblue/5' : 'border-line'"
+        tabindex="0"
+        @dragover="handleDragOver"
+        @dragleave="handleDragLeave"
+        @drop="handleDrop"
+      >
+        <p class="text-body text-body">✂️ 拖拽截图到此处，或按 <kbd class="px-1.5 py-0.5 border border-line rounded text-cap">Ctrl</kbd> + <kbd class="px-1.5 py-0.5 border border-line rounded text-cap">V</kbd> 粘贴</p>
+        <p class="text-cap text-muted mt-1">OCR 自动提取题目文本（支持截图工具、剪贴板图片）</p>
+        <p v-if="pasteHint" class="text-cap text-qblue mt-2 animate-pulse">✨ {{ pasteHint }}</p>
         <label class="inline-block mt-4 border border-line rounded-ctrl px-4 py-2 text-body cursor-pointer hover:border-qblue transition">
           选择截图
           <input type="file" accept="image/*" class="hidden" @change="onFile" />
