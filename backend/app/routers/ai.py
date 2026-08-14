@@ -75,8 +75,21 @@ async def ocr(file: UploadFile = File(...)):
     data = await file.read()
     if not data:
         raise HTTPException(400, "空文件")
-    text = ocr_service.recognize(data)
-    return {"text": text, "subject": ""}
+    try:
+        text = ocr_service.recognize(data)
+        return {"text": text, "subject": ""}
+    except ocr_service.OcrUnavailable as e:
+        # 503：依赖未安装，前端 catch 走 toast 提示用户安装
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "ocr_unavailable", "message": str(e)},
+        )
+    except ocr_service.OcrFailed as e:
+        # 500：依赖装了但本次识别失败（图片格式 / 内部错误），让用户重传图
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "ocr_failed", "message": str(e)},
+        )
 
 
 # ---------------- 统计 / 相似题 ----------------

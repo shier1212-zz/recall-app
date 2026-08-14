@@ -1,4 +1,4 @@
-"""PaddleOCR-VL 识别服务（懒加载；未安装时降级返回提示）。
+"""PaddleOCR-VL 识别服务（懒加载；未安装时抛异常，让路由返回 503）。
 
 安装：pip install paddleocr paddlepaddle
 新版本用法：PaddleOCR(model_name="PaddleOCR-VL", lang="ch")，调用 .predict(img=bytes)
@@ -9,6 +9,14 @@ import io
 from typing import Optional
 
 _ocr = None  # None=未初始化；False=不可用
+
+
+class OcrUnavailable(RuntimeError):
+    """paddleocr 未安装或初始化失败——前端应在 catch 里提示用户安装，不要把字符串当题目。"""
+
+
+class OcrFailed(RuntimeError):
+    """paddleocr 已装但本次识别异常（图片格式、识别内部错误）。"""
 
 
 def _get_ocr():
@@ -35,7 +43,7 @@ def _get_ocr():
 def recognize(image_bytes: bytes) -> str:
     ocr = _get_ocr()
     if not ocr:
-        return "（未安装 paddleocr，OCR 不可用。请执行 pip install paddleocr paddlepaddle 后重试）"
+        raise OcrUnavailable("paddleocr 未安装或初始化失败；请执行 pip install paddleocr paddlepaddle 后重试")
     try:
         result = ocr.predict(img=io.BytesIO(image_bytes))
         lines: list[str] = []
@@ -50,5 +58,5 @@ def recognize(image_bytes: bytes) -> str:
         result = ocr.ocr(io.BytesIO(image_bytes), cls=True)
         lines = [line[1][0] for block in result if block for line in block]
         return "\n".join(lines) or "（未识别到文本）"
-    except Exception:
-        return "（OCR 调用异常，请检查 paddleocr 安装与图片格式）"
+    except Exception as e:
+        raise OcrFailed(f"OCR 调用异常：{e}") from e

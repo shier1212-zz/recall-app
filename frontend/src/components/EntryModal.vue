@@ -129,9 +129,27 @@ async function processFile(f: File) {
     } else {
       store.showToast('未能识别到文字，请手动输入题目')
     }
-  } catch (err) {
-    tab.value = 'text'  // F1：识别失败也切到文本 tab，避免流程中断
-    store.showToast('OCR 识别失败（依赖未安装），请手动输入题目')
+  } catch (err: any) {
+    // 后端 OCR 路由已经按错误类型返回 4xx/5xx + {code, message}；
+    // 拉出后端给的真实原因，避免把降级文案当识别结果塞进 textarea（之前就是这里把
+    // "（未安装 paddleocr…）" 直接回填给用户，严重误导）。
+    const detail = err?.response?.data?.detail
+    const code = typeof detail === 'object' ? detail?.code : ''
+    const msg = typeof detail === 'object'
+      ? (detail?.message || err?.message || '')
+      : (detail || err?.message || '')
+    const friendly: Record<string, string> = {
+      ocr_unavailable: 'OCR 不可用：后端依赖（paddleocr / paddlepaddle）未安装。请到 backend/ 执行 `pip install paddleocr paddlepaddle`，或直接在文本框里手动输入题目。',
+      ocr_failed: 'OCR 识别失败，请换一张更清晰的图片重试，或手动输入题目。',
+    }
+    store.showToast(friendly[code] || `OCR 失败：${msg || '请手动输入题目'}`)
+    // 关键修复：之前 catch 没清空 text，导致旧残留 / 失败文案还在 textarea 里。
+    // 现在明确把文本框留空，让用户看到一个干净的手动输入区。
+    tab.value = 'text'
+    text.value = ''
+    subject.value = ''
+    aiSubject.value = false
+    classifyReason.value = ''
   } finally {
     uploading.value = false
   }
