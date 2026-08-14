@@ -98,7 +98,7 @@ function startReview() {
         <span class="text-cap text-muted">{{ subjectStats.total }}</span>
       </div>
       <div
-        v-for="s in SUBJECTS" :key="s"
+        v-for="(s, i) in SUBJECTS" :key="s"
         class="flex items-center justify-between px-2.5 py-2 rounded-ctrl cursor-pointer text-body transition"
         :class="activeSubject === s ? 'bg-cblue/10 text-qblue font-semibold' : 'hover:bg-bg'"
         @click="pickSubject(s)"
@@ -106,7 +106,7 @@ function startReview() {
         <span class="flex items-center gap-2">
           <i class="w-2 h-2 rounded-full inline-block" :style="{ background: SUBJECT_COLORS[s] }"></i>{{ s }}
         </span>
-        <span class="text-cap text-muted">{{ subjectStats.counts[s] }}</span>
+        <span class="text-cap text-muted">{{ subjectStats.items[i]?.count ?? 0 }}</span>
       </div>
       <div
         v-if="subjectStats.otherCount > 0"
