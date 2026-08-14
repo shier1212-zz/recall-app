@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { store } from '../store'
 import type { ReviewResult } from '../types'
@@ -7,6 +7,8 @@ import { formatAiAnalysis } from '../utils/formatAi'
 
 const router = useRouter()
 const showAnalysis = ref(false)
+// 用户在复习时手敲的答案：仅本会话有效，切到下一题自动清空，**不持久化、不参与比对**
+const myAnswer = ref('')
 
 const queue = computed(() => store.reviewQueue)
 const total = computed(() => queue.value.length)
@@ -14,24 +16,44 @@ const done = computed(() => store.reviewDone)
 const current = computed(() => (done.value || total.value === 0 ? null : queue.value[store.reviewIndex]))
 const progress = computed(() => (total.value === 0 ? 0 : Math.round((store.reviewIndex / total.value) * 100)))
 const stats = computed(() => store.reviewStats)
+// 本次复习过的题目数（已通过 recordReview 即时落库的题）
+const reviewedCount = computed(() => stats.value.mastered + stats.value.unmastered + stats.value.skipped)
 
 /** 历史脏数据/双重 JSON/替代符等异常 → 经 formatAiAnalysis 规范化为可读纯文本 */
 const formattedAnalysis = computed(() => (current.value ? formatAiAnalysis(current.value.aiAnalysis) : ''))
+
+// 切到下一题时清空作答区，让用户对当前题专心作答
+watch(
+  () => current.value?.id,
+  () => { myAnswer.value = '' }
+)
 
 async function act(result: ReviewResult) {
   if (!current.value) return
   const ok = await store.recordReview(current.value.id, result)
   if (!ok) return
   showAnalysis.value = false
+  // 切下一题——myAnswer 会被 watch 清空
   store.advanceReview()
 }
 
+// 题目态底部的「退出复习」按钮：
+// recordReview 已经在用户每次按 还不太会/跳过/我已掌握 时即时把单题结果写到后端，
+// 所以点退出不需要再次批量保存——只要清掉本地 session 状态并回到错题集页。
+// toast 反馈"已保存 N 道题"让用户明确知道复习进度不会丢。
+function exitToMistakeBook() {
+  const saved = reviewedCount.value
+  store.exitReview()
+  if (saved > 0) store.showToast(`已保存本次复习的 ${saved} 道题`)
+  router.push('/')
+}
+
+// 顶部"← 退出复习"按钮：仍保留 confirm 兜底（防止误点）；语义与底部按钮一致：已复习的题不丢
 function askExit() {
   if (total.value > 0 && !done.value) {
-    if (!confirm('退出后本次复习进度不保存，确定要退出吗？')) return
+    if (!confirm('退出后已复习过的题目仍会保留，未点击操作的题目将回到队列。确定要退出吗？')) return
   }
-  store.exitReview()
-  router.push('/')
+  exitToMistakeBook()
 }
 
 function restartUnmastered() {
@@ -106,6 +128,19 @@ function restartUnmastered() {
           {{ formattedAnalysis || '暂无 AI 解析。' }}
         </div>
       </div>
+
+      <!-- 我的作答（仅本会话保存，切到下一题自动清空，不与正确答案比对） -->
+      <div class="border-t border-line pt-4 mt-4">
+        <label class="block">
+          <span class="text-cap text-body font-semibold mb-1.5 block">📝 我的作答</span>
+          <textarea
+            v-model="myAnswer"
+            rows="4"
+            placeholder="在这里写下你的思路或答案（仅供本次复习回顾，不会与正确答案比对，也不会保存到错题集）"
+            class="w-full border border-line rounded-ctrl p-3 text-body resize-y min-h-[88px] focus:outline-none focus:border-qblue focus:ring-2 focus:ring-qblue/20"
+          />
+        </label>
+      </div>
     </div>
 
     <!-- 操作按钮（仅题目态显示） -->
@@ -127,6 +162,19 @@ function restartUnmastered() {
         @click="act('mastered')"
       >
         <span class="text-xl">✅</span><span class="text-body">我已掌握</span>
+      </button>
+    </div>
+
+    <!-- 退出复习（题目态底部独立按钮，保存已复习过的题并回到错题集） -->
+    <div v-if="!done && current" class="mt-4 flex justify-center">
+      <button
+        class="text-cap text-muted hover:text-ink transition flex items-center gap-1.5 px-4 py-2 rounded-ctrl hover:bg-bg"
+        :title="reviewedCount > 0 ? `已保存 ${reviewedCount} 道题，点击退出并回到错题集` : '退出复习并回到错题集'"
+        @click="exitToMistakeBook"
+      >
+        <span>←</span>
+        <span>退出复习</span>
+        <span v-if="reviewedCount > 0" class="text-cap text-qblue ml-1">（已保存 {{ reviewedCount }} 道）</span>
       </button>
     </div>
 
