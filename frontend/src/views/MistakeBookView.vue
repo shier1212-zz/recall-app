@@ -4,36 +4,15 @@ import { useRouter } from 'vue-router'
 import { store } from '../store'
 import MistakeCard from '../components/MistakeCard.vue'
 import { exportPdf } from '../api'
+import { SUBJECTS, SUBJECT_COLORS, computeSubjectStats } from '../utils/subjects'
 
 const router = useRouter()
 const activeSubject = ref('')            // '' = 全部
 const query = ref('')
 const filter = ref<'all' | 'reviewed' | 'todo'>('all')
 
-// 与录入时"学科"按钮完全一致的 10 个学科（错题分类导航的主入口）
-const subjects = ['数学', '物理', '英语', '化学', '生物', '历史', '政治', '地理', '语文', '信息']
-
-// 学科→展示色（与 EntryModal 按钮色系协调，用于左侧小圆点）
-const SUBJECT_COLORS: Record<string, string> = {
-  数学: '#5E5CE6', 物理: '#FF9F0A', 英语: '#FF453A', 化学: '#30D158',
-  生物: '#34C759', 历史: '#AC8E68', 政治: '#FF375F', 地理: '#0A84FF',
-  语文: '#BF5AF2', 信息: '#64D2FF'
-}
-
-/** 每个学科的错题数（含历史脏数据里不在 10 学科列表里的，单独归到"其它"） */
-const subjectCounts = computed(() => {
-  const counts: Record<string, number> = {}
-  for (const s of subjects) counts[s] = 0
-  let other = 0
-  for (const m of store.mistakes) {
-    if (m.subject && Object.prototype.hasOwnProperty.call(counts, m.subject)) {
-      counts[m.subject]++
-    } else if (m.subject) {
-      other++
-    }
-  }
-  return { counts, other, total: store.mistakes.length }
-})
+/** 每个学科的错题数（共享同一份标准与"其它"聚合，让错题集侧边栏与数据面板显示一致） */
+const subjectStats = computed(() => computeSubjectStats(store.mistakes))
 
 const list = computed(() =>
   store.mistakes.filter(m => {
@@ -116,10 +95,10 @@ function startReview() {
         @click="pickAll"
       >
         <span class="flex items-center gap-2">📚 全部</span>
-        <span class="text-cap text-muted">{{ subjectCounts.total }}</span>
+        <span class="text-cap text-muted">{{ subjectStats.total }}</span>
       </div>
       <div
-        v-for="s in subjects" :key="s"
+        v-for="s in SUBJECTS" :key="s"
         class="flex items-center justify-between px-2.5 py-2 rounded-ctrl cursor-pointer text-body transition"
         :class="activeSubject === s ? 'bg-cblue/10 text-qblue font-semibold' : 'hover:bg-bg'"
         @click="pickSubject(s)"
@@ -127,14 +106,14 @@ function startReview() {
         <span class="flex items-center gap-2">
           <i class="w-2 h-2 rounded-full inline-block" :style="{ background: SUBJECT_COLORS[s] }"></i>{{ s }}
         </span>
-        <span class="text-cap text-muted">{{ subjectCounts.counts[s] }}</span>
+        <span class="text-cap text-muted">{{ subjectStats.counts[s] }}</span>
       </div>
       <div
-        v-if="subjectCounts.other > 0"
+        v-if="subjectStats.otherCount > 0"
         class="flex items-center justify-between px-2.5 py-2 rounded-ctrl cursor-pointer text-body transition hover:bg-bg"
       >
         <span class="flex items-center gap-2"><i class="w-2 h-2 rounded-full inline-block bg-muted"></i>其它</span>
-        <span class="text-cap text-muted">{{ subjectCounts.other }}</span>
+        <span class="text-cap text-muted">{{ subjectStats.otherCount }}</span>
       </div>
     </aside>
 

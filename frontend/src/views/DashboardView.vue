@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { store } from '../store'
 import { fetchOverview } from '../api'
+import { computeSubjectStats, SUBJECT_COLORS } from '../utils/subjects'
 
 const overview = ref<{
   total: number; reviewed: number; todo: number; categories: number; due_today: number
@@ -21,6 +22,18 @@ const mastered = computed(() => store.mistakes.filter(m => m.reviewed).length)
 const todo = computed(() => store.mistakes.filter(m => !m.reviewed).length)
 const dueToday = computed(() => overview.value?.due_today ?? 0)
 
+/**
+ * 学科分布：直接基于本地 store.mistakes 计算（与"错题集"侧边栏共用同一份
+ * 10 学科定义 / SUBJECT_COLORS / 「其它」归类）。
+ *
+ * 不走 /api/analysis/overview 字段，理由：
+ *   api.ts 里的 toCamelKeys 拦截器把后端 snake_case 全部转成 camelCase，
+ *   导致 overview.subject_stats 在前端始终是 undefined → 一直显示「暂无」。
+ * 改用客户端计算后，错题集侧边栏 ↔ 数据面板分布 100% 一致，刷新即同步。
+ */
+const subjectStats = computed(() => computeSubjectStats(store.mistakes))
+const subjectDistMax = computed(() => Math.max(1, ...subjectStats.value.items.map(i => i.count)))
+
 // 趋势 SVG 坐标（基于真实近 7 日录入量）
 const trendPoints = computed(() => {
   const t = overview.value?.trend ?? []
@@ -34,7 +47,6 @@ const trendPoints = computed(() => {
   }).join(' ')
 })
 
-const subjectMax = computed(() => Math.max(1, ...(overview.value?.subject_stats ?? []).map(s => s.count)))
 </script>
 
 <template>
@@ -75,17 +87,38 @@ const subjectMax = computed(() => Math.max(1, ...(overview.value?.subject_stats 
     </div>
 
     <div class="bg-surface border border-line rounded-card p-6">
-      <h3 class="text-h2 mb-4">学科分布（真实数据）</h3>
-      <div v-if="overview?.subject_stats?.length" class="space-y-3">
-        <div v-for="s in overview.subject_stats" :key="s.subject" class="flex items-center gap-3">
-          <span class="text-body w-20 shrink-0">{{ s.subject }}</span>
+      <div class="flex items-baseline justify-between mb-4">
+        <h3 class="text-h2">学科分布（真实数据）</h3>
+        <span class="text-cap text-muted">
+          共 <span class="text-qblue font-semibold">{{ subjectStats.total }}</span> 题
+          <span v-if="subjectStats.otherCount" class="ml-2">· 其它 {{ subjectStats.otherCount }}（历史脏学科）</span>
+        </span>
+      </div>
+      <div v-if="subjectStats.items.length" class="space-y-3">
+        <div v-for="s in subjectStats.items" :key="s.subject" class="flex items-center gap-3">
+          <span class="text-body w-20 shrink-0 flex items-center gap-1.5">
+            <i
+              v-if="s.subject !== '__other__'"
+              class="w-2 h-2 rounded-full inline-block"
+              :style="{ background: SUBJECT_COLORS[s.subject] }"
+            ></i>
+            <i v-else class="w-2 h-2 rounded-full inline-block bg-muted"></i>
+            {{ s.display }}
+          </span>
           <div class="flex-1 h-3 bg-bg rounded-full overflow-hidden">
-            <div class="h-full bg-qblue rounded-full" :style="{ width: (s.count / subjectMax * 100) + '%' }"></div>
+            <div
+              class="h-full rounded-full transition-all"
+              :style="{
+                width: (s.count / subjectDistMax * 100) + '%',
+                background: s.subject === '__other__' ? 'var(--muted)' : SUBJECT_COLORS[s.subject]
+              }"
+            ></div>
           </div>
-          <span class="text-cap text-muted w-10 text-right">{{ s.count }}</span>
+          <span class="text-cap text-muted w-10 text-right tabular-nums">{{ s.count }}</span>
         </div>
       </div>
       <p v-else class="text-cap text-muted">暂无学科分布数据</p>
+      <p v-if="subjectStats.total === 0 && store.mistakes.length === 0" class="text-cap text-muted">请先录入错题</p>
     </div>
   </div>
 </template>
