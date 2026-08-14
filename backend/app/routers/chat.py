@@ -36,6 +36,16 @@ def create_conversation(
     return c
 
 
+@router.delete("/conversations")
+def clear_conversations(db: Session = Depends(get_db)):
+    """清空全部对话（先删 messages 再删 conversations，避开外键约束）。
+    2026-08-15：AI 答疑页新增「清空对话」按钮配套。"""
+    msg_count = db.query(models.ChatMessage).delete()
+    conv_count = db.query(models.Conversation).delete()
+    db.commit()
+    return {"ok": True, "deleted_conversations": conv_count, "deleted_messages": msg_count}
+
+
 @router.get("/conversations/{cid}/messages", response_model=list[schemas.MessageOut])
 def list_messages(cid: int, db: Session = Depends(get_db)):
     conv = db.get(models.Conversation, cid)

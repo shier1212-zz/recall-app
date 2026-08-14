@@ -402,6 +402,25 @@ export const store = reactive({
     this.showToast('已新建对话')
   },
 
+  async clearConversations() {
+    // destructive：先 confirm（按钮处再确认一次更稳）
+    if (this.conversations.length === 0) {
+      this.showToast('暂无对话可清空')
+      return
+    }
+    try {
+      const res = await api.clearConversations()
+      this.conversations = []
+      this.activeConvId = 0
+      // 立即新建一个空对话，避免右侧聊天区空白（与 onMounted 首次进页保持一致）
+      await this.newConversation()
+      this.showToast(`已清空 ${res.deleted_conversations} 个对话`)
+    } catch (e) {
+      console.error('clearConversations 失败', e)
+      this.showToast('清空失败，请重试')
+    }
+  },
+
   setProvider(p: AiProvider) {
     if (this.aiProvider === p) return
     this.aiProvider = p

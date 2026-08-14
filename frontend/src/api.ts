@@ -182,6 +182,15 @@ export async function createConversation(title: string): Promise<Conversation> {
   return data
 }
 
+export async function clearConversations(): Promise<{ ok: boolean; deleted_conversations: number; deleted_messages: number }> {
+  if (USE_MOCK) {
+    conversations = []
+    return { ok: true, deleted_conversations: 0, deleted_messages: 0 }
+  }
+  const { data } = await http.delete('/conversations')
+  return data
+}
+
 /** 新建错题本（F2：持久化，避免刷新即丢） */
 export async function createCategory(name: string, color?: string): Promise<Category> {
   if (USE_MOCK) {

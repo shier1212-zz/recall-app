@@ -12,6 +12,17 @@ onMounted(async () => {
     catch (e) { console.error('自动创建首个会话失败', e) }
   }
 })
+
+// 清空对话：destructive，先 confirm 让用户确认
+async function clearAllConversations() {
+  const count = store.conversations.length
+  if (count === 0) {
+    store.showToast('暂无对话可清空')
+    return
+  }
+  if (!confirm(`确定要清空全部 ${count} 个对话吗？清空后无法恢复。`)) return
+  await store.clearConversations()
+}
 </script>
 
 <template>
@@ -29,6 +40,12 @@ onMounted(async () => {
         class="mt-4 text-center border border-dashed border-line rounded-ctrl py-2 text-cap text-body cursor-pointer hover:border-qblue hover:text-qblue transition"
         @click="store.newConversation()"
       >＋ 新建对话</div>
+      <div
+        class="mt-2 text-center border border-dashed border-warn/40 rounded-ctrl py-2 text-cap text-warn cursor-pointer hover:border-warn hover:bg-warn/5 transition"
+        :class="store.conversations.length === 0 ? 'opacity-50 cursor-not-allowed' : ''"
+        :title="store.conversations.length === 0 ? '暂无对话' : `清空全部 ${store.conversations.length} 个对话`"
+        @click="clearAllConversations"
+      >🗑 清空对话</div>
     </aside>
 
     <!-- 右：聊天区 -->
@@ -42,6 +59,11 @@ onMounted(async () => {
           @click="store.activeConvId = c.id"
         >{{ c.title }}</button>
         <button class="text-cap border border-dashed rounded-tag px-2.5 py-1 text-body" @click="store.newConversation()">＋ 新建</button>
+        <button
+          class="text-cap border border-dashed border-warn/40 rounded-tag px-2.5 py-1 text-warn"
+          :disabled="store.conversations.length === 0"
+          @click="clearAllConversations"
+        >🗑 清空</button>
       </div>
 
       <ChatWindow
